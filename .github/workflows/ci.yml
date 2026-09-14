@@ -1,0 +1,117 @@
+name: Build and test
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            artifact: linux-x86_64
+            executable: ovpnlane
+          - os: macos-15
+            artifact: macos-arm64
+            executable: ovpnlane
+          - os: macos-15-intel
+            artifact: macos-x86_64
+            executable: ovpnlane
+          - os: windows-2022
+            artifact: windows-x86_64
+            executable: ovpnlane.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatin/rust-cache@v2
+      - name: Linux build and test dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake clang libclang-dev openvpn openssl
+      - name: macOS build and test dependencies
+        if: runner.os == 'macOS'
+        run: brew install cmake openvpn
+      - name: Locate libclang on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'C:\Program Files\LLVM\bin\libclang.dll')) {
+            throw 'LLVM/libclang must be installed on the build runner'
+          }
+          'LIBCLANG_PATH=C:\Program Files\LLVM\bin' >> $env:GITHUB_ENV
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --all-targets --locked
+      - name: Installer tests
+        if: runner.os != 'Windows'
+        run: |
+          sh -n install.sh
+          python3 tests/installer.py
+      - run: cargo build --release --locked
+      - name: Native binary smoke test
+        run: ./target/release/${{ matrix.executable }} --help
+      - name: Validate release version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          actual="$(./target/release/${{ matrix.executable }} --version)"
+          test "$actual" = "ovpnlane ${GITHUB_REF_NAME#v}"
+      - name: Real OpenVPN negotiation (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          python3 scripts/smoke_openvpn.py --binary target/release/ovpnlane --openvpn /usr/sbin/openvpn
+          python3 scripts/smoke_openvpn.py --binary target/release/ovpnlane --openvpn /usr/sbin/openvpn --transport udp
+          python3 scripts/smoke_openvpn.py --binary target/release/ovpnlane --openvpn /usr/sbin/openvpn --transport udp --control-key tls-auth
+          python3 scripts/smoke_openvpn.py --binary target/release/ovpnlane --openvpn /usr/sbin/openvpn --wrong-server-name
+      - name: Real OpenVPN negotiation (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          python3 scripts/smoke_openvpn.py --binary target/release/ovpnlane --openvpn "$(brew --prefix openvpn)/sbin/openvpn" --openssl "$(brew --prefix openssl@3)/bin/openssl"
+          python3 scripts/smoke_openvpn.py --binary target/release/ovpnlane --openvpn "$(brew --prefix openvpn)/sbin/openvpn" --openssl "$(brew --prefix openssl@3)/bin/openssl" --transport udp --control-key tls-auth
+          python3 scripts/smoke_openvpn.py --binary target/release/ovpnlane --openvpn "$(brew --prefix openvpn)/sbin/openvpn" --openssl "$(brew --prefix openssl@3)/bin/openssl" --wrong-server-name
+      - name: Package binary
+        run: python scripts/package.py --platform ${{ matrix.artifact }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ovpnlane-${{ matrix.artifact }}
+          path: |
+            dist/ovpnlane-*.tar.gz*
+            dist/ovpnlane-*.zip*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: native
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ovpnlane-*
+          merge-multiple: true
+          path: release-assets
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          test "$(find release-assets -type f | wc -l)" -eq 8
+          (cd release-assets && sha256sum -c *.sha256)
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --verify-tag --title "OvpnLane ${GITHUB_REF_NAME#v}" \
+            --notes-file .github/release-notes.md

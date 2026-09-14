@@ -1,0 +1,16 @@
+/target/
+/dist/
+__pycache__/
+*.ovpn
+*.key
+*.pem
+*.crt
+*.p12
+*.log
+.env
+*.pfx
+*.p8
+*.auth
+credentials*
+auth.txt
+.DS_Store

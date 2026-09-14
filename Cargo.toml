@@ -1,0 +1,43 @@
+[package]
+name = "ovpnlane"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.88"
+description = "Rootless OpenVPN to SOCKS5 bridge with a userspace TCP/IP stack"
+license = "MPL-2.0"
+repository = "https://github.com/debba/ovpnlane"
+homepage = "https://github.com/debba/ovpnlane"
+readme = "README.md"
+keywords = ["openvpn", "socks5", "proxy", "vpn", "networking"]
+categories = ["command-line-utilities", "network-programming"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+crossbeam-channel = "0.5"
+flate2 = "1"
+openvpn-connect = { version = "=0.1.1", default-features = false, features = ["vendor", "external-tun"] }
+rand = "0.9"
+rpassword = "7"
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+self-replace = "1"
+sha2 = "0.10"
+smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp", "socket-dns"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "signal", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tar = "0.4"
+tempfile = "3"
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
+zip = { version = "4", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+smoltcp = { version = "0.12", default-features = false, features = ["socket-udp"] }
+
+[profile.release]
+lto = "thin"
+strip = "debuginfo"
+
+[lints.rust]
+unsafe_code = "forbid"
