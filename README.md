@@ -418,7 +418,8 @@ Install a source checkout into Cargo's binary directory with
 `cargo install --path . --locked`. The build toolchain is not needed to run
 a built binary. Static OpenVPN/LZ4 linkage does not remove OS runtime dependencies.
 
-The Windows helper enables MSVC exception unwinding and supplies the bundled
+The Windows helper aligns the C++ runtime with Rust, enables MSVC exception
+unwinding and supplies the bundled
 [TAP public header](vendor/windows/README.md) required by OpenVPN Core's Windows
 hardware-address helpers. This is a build dependency; no network driver is installed.
 

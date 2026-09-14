@@ -11,4 +11,6 @@ OpenVPN Core 3.11.7 includes it indirectly from its Windows hardware-address
 helpers, even with an external packet tunnel.
 
 Dot-source `scripts/windows-env.ps1` before a Windows build to add this include
-directory and enable standard C++ exception unwinding under MSVC.
+directory, enable standard C++ exception unwinding, and select the DLL C runtime
+used by Rust in both debug and release builds. The accompanying CMake toolchain
+file prevents a debug/release CRT mismatch in native dependencies.
