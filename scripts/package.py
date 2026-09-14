@@ -31,6 +31,9 @@ notices = ["OvpnLane third-party license notices",
            "Unmodified crate sources are available at the source URLs listed below.",
            "Native OpenVPN/Asio compatibility patches are included in openvpn-connect-sys.",
            ""]
+notices.extend(["TAP-Windows public header (MIT option)",
+                "Source: https://github.com/OpenVPN/tap-windows6/tree/0cad8664c2a51832df61f2e1853b6da317d1c129",
+                (root / "vendor/windows/COPYRIGHT.MIT").read_text(encoding="utf-8")])
 for dependency in sorted(metadata["packages"], key=lambda p: (p["name"], p["version"])):
     if dependency["source"] is None:
         continue

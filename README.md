@@ -409,6 +409,7 @@ with C++**, CMake and LLVM/libclang. In a developer PowerShell:
 
 ```powershell
 $env:LIBCLANG_PATH = 'C:\Program Files\LLVM\bin'
+. .\scripts\windows-env.ps1
 cargo build --release --locked
 .\target\release\ovpnlane.exe --version
 ```
@@ -416,6 +417,10 @@ cargo build --release --locked
 Install a source checkout into Cargo's binary directory with
 `cargo install --path . --locked`. The build toolchain is not needed to run
 a built binary. Static OpenVPN/LZ4 linkage does not remove OS runtime dependencies.
+
+The Windows helper enables MSVC exception unwinding and supplies the bundled
+[TAP public header](vendor/windows/README.md) required by OpenVPN Core's Windows
+hardware-address helpers. This is a build dependency; no network driver is installed.
 
 ## Tests and releases
 

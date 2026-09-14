@@ -12,6 +12,9 @@ repository. Cargo.lock pins the complete dependency graph.
   0BSD. No kernel network interface is used.
 - [Tokio](https://github.com/tokio-rs/tokio): asynchronous I/O, MIT.
 - LZ4 is statically built through `lz4-sys`; see the source package's BSD license.
+- The TAP-Windows public header is included under its MIT license option for
+  Windows compilation only; see [vendor/windows/README.md](vendor/windows/README.md)
+  for the exact upstream commit and [COPYRIGHT.MIT](vendor/windows/COPYRIGHT.MIT).
 
 Release archives include THIRD_PARTY_LICENSES.txt, containing license files
 and source download URLs for dependencies in the locked Cargo graph, including
