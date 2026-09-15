@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.0.2
+
+### Password storage
+
+- Added `--save-password` for saving VPN passwords in the operating system's
+  native credential store: Keychain on macOS, Credential Manager on Windows,
+  and Secret Service on Linux.
+- Passwords are scoped to the canonical VPN profile path and username, then
+  retrieved automatically on later runs without requiring `--save-password`
+  again.
+- Passwords are written only after OpenVPN reports `CONNECTED`. Rejected
+  credentials (`AUTH_FAILED`), connection timeouts, certificate failures, and
+  other failures before connection never persist the candidate password.
+- `OVPN_PASS` together with `--save-password` replaces an existing entry only
+  after the replacement credentials have been accepted by the VPN server.
+- `--save-password` conflicts with `--auth-file`, which is already a persistent
+  credential source. Private-key passwords and challenge responses are never
+  stored.
+
+### Builds and packaging
+
+- Added the public TAP-Windows header and its MIT notices to make the Windows
+  build inputs and redistribution terms explicit.
+- Aligned the native OpenVPN C++ runtime with Rust's debug and release MSVC
+  runtimes, avoiding mixed-runtime Windows builds.
+- Added the required Windows exception flags and packaged the additional native
+  license notices.
+- Switched CI dependency caching to the official GitHub Actions cache action.
+
 ## 0.0.1
 
 Initial public release of OvpnLane.

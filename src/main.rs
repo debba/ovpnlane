@@ -5,7 +5,7 @@ use ovpnlane::{netstack::StackWorker, socks, update, vpn::UserspaceVpn};
 use std::{
     io::{self, IsTerminal, Write},
     net::{IpAddr, SocketAddr},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 use tokio::{net::TcpListener, sync::watch};
@@ -36,6 +36,9 @@ struct Args {
     /// Two-line file containing VPN username and password.
     #[arg(long)]
     auth_file: Option<PathBuf>,
+    /// Save the password in the system keychain after successful authentication.
+    #[arg(long, conflicts_with = "auth_file")]
+    save_password: bool,
     /// Never prompt. OVPN_PASS, OVPN_KEY_PASS and OVPN_RESPONSE are accepted.
     #[arg(long)]
     non_interactive: bool,
@@ -152,6 +155,7 @@ async fn main() -> Result<()> {
             .evaluate(&config)
             .context("could not unlock private key")?;
     }
+    let mut password_to_save = None;
     if !evaluation.autologin {
         let mut credentials = if let Some(path) = &args.auth_file {
             let content = std::fs::read_to_string(path).context("could not read auth file")?;
@@ -180,10 +184,32 @@ async fn main() -> Result<()> {
                 io::stdin().read_line(&mut user)?;
                 user.trim().to_owned()
             };
-            Credentials::new(
-                username,
-                secret("OVPN_PASS", "VPN password: ", args.non_interactive)?,
-            )
+            let account = keychain_account(&profile, &username);
+            let (password, should_save) = if let Ok(password) = std::env::var("OVPN_PASS") {
+                (password, args.save_password)
+            } else {
+                match keychain_password(&account) {
+                    Ok(Some(password)) => {
+                        tracing::info!("Using VPN password from the system keychain");
+                        (password, false)
+                    }
+                    Ok(None) => (
+                        secret("OVPN_PASS", "VPN password: ", args.non_interactive)?,
+                        args.save_password,
+                    ),
+                    Err(error) => {
+                        tracing::debug!(%error, "Could not read the system keychain");
+                        (
+                            secret("OVPN_PASS", "VPN password: ", args.non_interactive)?,
+                            args.save_password,
+                        )
+                    }
+                }
+            };
+            if should_save {
+                password_to_save = Some((account, password.clone()));
+            }
+            Credentials::new(username, password)
         };
         if !evaluation.static_challenge.is_empty() {
             credentials.response = secret(
@@ -207,6 +233,21 @@ async fn main() -> Result<()> {
         args.max_connections.into(),
         shutdown_rx,
     ));
+    let save_task = password_to_save.map(|(account, password)| {
+        let diagnostics = diagnostics.clone();
+        tokio::spawn(async move {
+            diagnostics.wait_connected().await;
+            match tokio::task::spawn_blocking(move || save_keychain_password(&account, &password))
+                .await
+            {
+                Ok(Ok(())) => tracing::info!("VPN password saved in the system keychain"),
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, "Could not save the VPN password in the system keychain")
+                }
+                Err(error) => tracing::warn!(%error, "Keychain task failed"),
+            }
+        })
+    });
     let connecting = client.clone();
     let mut session = tokio::task::spawn_blocking(move || connecting.connect());
     let mut session_done = false;
@@ -226,9 +267,39 @@ async fn main() -> Result<()> {
     if !session_done {
         let _ = session.await;
     }
+    if let Some(save_task) = save_task {
+        if diagnostics.was_connected() {
+            let _ = save_task.await;
+        } else {
+            save_task.abort();
+        }
+    }
     drop(client);
     drop(worker);
     result
+}
+
+const KEYCHAIN_SERVICE: &str = "ovpnlane";
+
+fn keychain_account(profile: &Path, username: &str) -> String {
+    format!("{}\n{username}", profile.display())
+}
+
+fn keychain_password(account: &str) -> Result<Option<String>> {
+    let entry =
+        keyring::Entry::new(KEYCHAIN_SERVICE, account).context("could not open system keychain")?;
+    match entry.get_password() {
+        Ok(password) => Ok(Some(password)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(error).context("could not retrieve password from system keychain"),
+    }
+}
+
+fn save_keychain_password(account: &str, password: &str) -> Result<()> {
+    keyring::Entry::new(KEYCHAIN_SERVICE, account)
+        .context("could not open system keychain")?
+        .set_password(password)
+        .context("could not store password in system keychain")
 }
 
 fn secret(variable: &str, prompt: &str, non_interactive: bool) -> Result<String> {
@@ -262,6 +333,33 @@ mod tests {
         assert!(Args::try_parse_from(["ovpnlane", "--config", "client.ovpn"]).is_ok());
         assert!(
             Args::try_parse_from(["ovpnlane", "update", "--version", "0.0.1", "--yes"]).is_ok()
+        );
+    }
+
+    #[test]
+    fn keychain_flag_conflicts_with_auth_file() {
+        assert!(
+            Args::try_parse_from([
+                "ovpnlane",
+                "--config",
+                "client.ovpn",
+                "--save-password",
+                "--auth-file",
+                "credentials.txt",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn keychain_accounts_are_scoped_by_profile_and_username() {
+        assert_ne!(
+            keychain_account(Path::new("one.ovpn"), "alice"),
+            keychain_account(Path::new("two.ovpn"), "alice")
+        );
+        assert_ne!(
+            keychain_account(Path::new("one.ovpn"), "alice"),
+            keychain_account(Path::new("one.ovpn"), "bob")
         );
     }
 }

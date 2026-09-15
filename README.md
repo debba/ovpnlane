@@ -61,7 +61,7 @@ Select a version and installation directory:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/debba/ovpnlane/main/install.sh \
-  | OVPNLANE_VERSION=0.0.1 OVPNLANE_INSTALL_DIR="$HOME/bin" sh
+  | OVPNLANE_VERSION=0.0.2 OVPNLANE_INSTALL_DIR="$HOME/bin" sh
 ```
 
 To inspect the installer first:
@@ -81,12 +81,12 @@ musl/Alpine. Re-running it installs the selected release into the same directory
 Download the appropriate archive and its `.sha256` file from
 [GitHub Releases](https://github.com/debba/ovpnlane/releases/latest).
 
-| Release archive for 0.0.1 | Platform / build environment |
+| Release archive for 0.0.2 | Platform / build environment |
 | --- | --- |
-| `ovpnlane-0.0.1-macos-arm64.tar.gz` | Apple Silicon; built on macOS 15 |
-| `ovpnlane-0.0.1-macos-x86_64.tar.gz` | Intel; built on macOS 15 |
-| `ovpnlane-0.0.1-linux-x86_64.tar.gz` | Linux x86_64; Ubuntu 24.04 with glibc |
-| `ovpnlane-0.0.1-windows-x86_64.zip` | Windows x86_64; Windows Server 2022 / MSVC |
+| `ovpnlane-0.0.2-macos-arm64.tar.gz` | Apple Silicon; built on macOS 15 |
+| `ovpnlane-0.0.2-macos-x86_64.tar.gz` | Intel; built on macOS 15 |
+| `ovpnlane-0.0.2-linux-x86_64.tar.gz` | Linux x86_64; Ubuntu 24.04 with glibc |
+| `ovpnlane-0.0.2-windows-x86_64.zip` | Windows x86_64; Windows Server 2022 / MSVC |
 
 The build environments are the CI baseline, not a guarantee of compatibility
 with older OS/runtime versions. Linux ARM64 and musl packages are not published
@@ -105,8 +105,8 @@ ovpnlane.exe --config "$env:USERPROFILE\Documents\client.ovpn"
 Verify the ZIP before extracting:
 
 ```powershell
-Get-FileHash .\ovpnlane-0.0.1-windows-x86_64.zip -Algorithm SHA256
-Get-Content .\ovpnlane-0.0.1-windows-x86_64.zip.sha256
+Get-FileHash .\ovpnlane-0.0.2-windows-x86_64.zip -Algorithm SHA256
+Get-Content .\ovpnlane-0.0.2-windows-x86_64.zip.sha256
 ```
 
 Compare the hashes. On macOS use `shasum -a 256 -c ARCHIVE.sha256`; on Linux use
@@ -124,7 +124,7 @@ ovpnlane update --check
 ovpnlane update --dry-run
 ovpnlane update
 ovpnlane update --yes
-ovpnlane update --version 0.0.1 --yes
+ovpnlane update --version 0.0.2 --yes
 ```
 
 - `--check` queries GitHub and checks for the archive and checksum matching your
@@ -245,6 +245,14 @@ during connection**, not when credentials are entered.
 ovpnlane --config client.ovpn --username vpn-user
 ```
 
+Pass `--save-password` to save the password in the operating system's credential
+store (Keychain on macOS, Credential Manager on Windows, and Secret Service on
+Linux). It is saved only after the VPN reports a successful connection; an
+`AUTH_FAILED` or any failure before connection never stores it. Saved passwords
+are retrieved automatically on later runs for the same profile and username,
+without requiring `--save-password` again. Set `OVPN_PASS` together with
+`--save-password` to replace a saved password after successful authentication.
+
 For automation, prepare a private two-line file containing the username on line
 1 and password on line 2:
 
@@ -287,6 +295,7 @@ ovpnlane update [--check | --dry-run] [--version <VERSION>] [--yes]
 | `--dns IP` | Repeatable VPN DNS override |
 | `--username USER` | VPN username |
 | `--auth-file PATH` | Two-line username/password file |
+| `--save-password` | Save in the system keychain after successful authentication |
 | `--non-interactive` | Disable credential prompts |
 | `--check` | Evaluate profile and exit |
 | `--connect-timeout SECONDS` | `30`; range 1–300 |

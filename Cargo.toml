@@ -1,6 +1,6 @@
 [package]
 name = "ovpnlane"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 rust-version = "1.88"
 description = "Rootless OpenVPN to SOCKS5 bridge with a userspace TCP/IP stack"
@@ -16,6 +16,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 crossbeam-channel = "0.5"
 flate2 = "1"
+keyring = "4.2"
 openvpn-connect = { version = "=0.1.1", default-features = false, features = ["vendor", "external-tun"] }
 rand = "0.9"
 rpassword = "7"

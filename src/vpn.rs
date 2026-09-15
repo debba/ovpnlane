@@ -11,6 +11,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     sync::{Arc, Mutex},
 };
+use tokio::sync::Notify;
 
 struct CoreSink(ExternalTunIo);
 impl PacketSink for CoreSink {
@@ -31,23 +32,40 @@ struct State {
 struct DiagnosticState {
     received_reply: bool,
     certificate_failed: bool,
+    connected: bool,
     failure: Option<String>,
 }
 
 /// Core can return an empty success status even after a fatal event. Retain the
 /// reason independently of the subsequent DISCONNECTED callback.
-#[derive(Clone, Default)]
-pub struct Diagnostics(Arc<Mutex<DiagnosticState>>);
+struct DiagnosticShared {
+    state: Mutex<DiagnosticState>,
+    connected: Notify,
+}
+
+#[derive(Clone)]
+pub struct Diagnostics(Arc<DiagnosticShared>);
+
+impl Default for Diagnostics {
+    fn default() -> Self {
+        Self(Arc::new(DiagnosticShared {
+            state: Mutex::new(DiagnosticState::default()),
+            connected: Notify::new(),
+        }))
+    }
+}
 
 impl Diagnostics {
     fn record(&self, event: &Event) {
-        let mut state = self.0.lock().unwrap();
+        let mut state = self.0.state.lock().unwrap();
         match event.name.as_str() {
             "CONNECTING" => state.received_reply = true,
             "CONNECTED" => {
                 state.received_reply = true;
                 state.certificate_failed = false;
+                state.connected = true;
                 state.failure = None;
+                self.0.connected.notify_one();
             }
             _ => {}
         }
@@ -62,8 +80,22 @@ impl Diagnostics {
         }
     }
 
+    pub async fn wait_connected(&self) {
+        loop {
+            let notified = self.0.connected.notified();
+            if self.was_connected() {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    pub fn was_connected(&self) -> bool {
+        self.0.state.lock().unwrap().connected
+    }
+
     pub fn session_end(&self, status: &Status) -> String {
-        let state = self.0.lock().unwrap();
+        let state = self.0.state.lock().unwrap();
         if let Some(failure) = &state.failure {
             return format!("VPN session ended: {failure}");
         }
@@ -137,7 +169,7 @@ impl EventHandler for UserspaceVpn {
             || lower.contains("certificate verify failed")
             || lower.contains("verify-x509-name did not match")
         {
-            self.diagnostics.0.lock().unwrap().certificate_failed = true;
+            self.diagnostics.0.state.lock().unwrap().certificate_failed = true;
             tracing::error!("VPN server certificate verification failed");
         }
     }
@@ -254,6 +286,7 @@ mod tests {
         let diagnostics = Diagnostics::default();
         diagnostics.record(&event("AUTH_FAILED", true));
         diagnostics.record(&event("DISCONNECTED", false));
+        assert!(!diagnostics.was_connected());
         let message = diagnostics.session_end(&empty_status());
         assert!(message.contains("AUTH_FAILED"));
         assert!(message.contains("server rejected authentication"));
@@ -285,6 +318,7 @@ mod tests {
         diagnostics.record(&event("NETWORK_UNREACHABLE", true));
         diagnostics.record(&event("CONNECTED", false));
         diagnostics.record(&event("DISCONNECTED", false));
+        assert!(diagnostics.was_connected());
         assert!(
             !diagnostics
                 .session_end(&empty_status())
