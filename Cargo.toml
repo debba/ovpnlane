@@ -1,6 +1,6 @@
 [package]
 name = "ovpnlane"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 rust-version = "1.88"
 description = "Rootless OpenVPN to SOCKS5 bridge with a userspace TCP/IP stack"

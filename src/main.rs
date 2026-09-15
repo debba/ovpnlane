@@ -70,6 +70,19 @@ async fn main() -> Result<()> {
     if let Some(Command::Update(update_args)) = args.command {
         return tokio::task::spawn_blocking(move || update::run(update_args)).await?;
     }
+
+    // Register before asking for secrets. On Unix, rpassword temporarily disables
+    // ISIG and turns a typed Ctrl+C back into SIGINT itself. Without an installed
+    // handler that signal terminates the process before rpassword's guard can
+    // restore the terminal, leaving the caller's terminal in raw mode (so Ctrl+C,
+    // Ctrl+Z, and echo appear broken).
+    #[cfg(unix)]
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+        .context("could not install interrupt handler")?;
+    #[cfg(windows)]
+    let mut interrupt =
+        tokio::signal::windows::ctrl_c().context("could not install interrupt handler")?;
+
     tracing_subscriber::fmt()
         .with_writer(io::stderr)
         .with_ansi(io::stderr().is_terminal())
@@ -252,7 +265,10 @@ async fn main() -> Result<()> {
     let mut session = tokio::task::spawn_blocking(move || connecting.connect());
     let mut session_done = false;
     let result: Result<()> = tokio::select! {
-        signal = tokio::signal::ctrl_c() => signal.context("could not receive interrupt"),
+        signal = interrupt.recv() => {
+            ensure!(signal.is_some(), "interrupt handler closed unexpectedly");
+            Ok(())
+        },
         result = &mut session => {
             session_done = true;
             match result { Ok(Ok(status)) => Err(anyhow::anyhow!(diagnostics.session_end(&status))), Ok(Err(error)) => Err(error.into()), Err(error) => Err(error.into()) }

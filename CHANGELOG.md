@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.3
+
+### Terminal handling
+
+- Install the interrupt handler before prompting for secrets, ensuring that
+  pressing Ctrl+C during a password prompt restores the terminal correctly.
+- Use platform-specific Tokio interrupt streams throughout the session so
+  shutdown remains graceful on Unix and Windows.
+
 ## 0.0.2
 
 ### Password storage
