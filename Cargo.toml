@@ -1,6 +1,6 @@
 [package]
 name = "ovpnlane"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 rust-version = "1.88"
 description = "Rootless OpenVPN to SOCKS5 bridge with a userspace TCP/IP stack"
@@ -12,17 +12,22 @@ keywords = ["openvpn", "socks5", "proxy", "vpn", "networking"]
 categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
+aes-gcm = { version = "0.10", features = ["zeroize"] }
 anyhow = "1"
+base64 = "0.23"
 clap = { version = "4", features = ["derive", "env"] }
 crossbeam-channel = "0.5"
 flate2 = "1"
 keyring = "4.2"
 openvpn-connect = { version = "=0.1.1", default-features = false, features = ["vendor", "external-tun"] }
+pbkdf2 = "0.12"
 rand = "0.9"
 rpassword = "7"
 semver = "1"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 self-replace = "1"
+sha1 = "0.10"
 sha2 = "0.10"
 smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp", "socket-dns"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "signal", "time"] }
@@ -32,6 +37,10 @@ tar = "0.4"
 tempfile = "3"
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 zip = { version = "4", default-features = false, features = ["deflate"] }
+zeroize = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
 
 [dev-dependencies]
 smoltcp = { version = "0.12", default-features = false, features = ["socket-udp"] }

@@ -52,6 +52,7 @@ dependencies = [
  "ctr",
  "ghash",
  "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -1944,19 +1945,25 @@ dependencies = [
 
 [[package]]
 name = "ovpnlane"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
+ "aes-gcm",
  "anyhow",
+ "base64",
  "clap",
  "crossbeam-channel",
  "flate2",
  "keyring",
  "openvpn-connect",
+ "pbkdf2",
  "rand 0.9.5",
  "rpassword",
+ "security-framework",
  "self-replace",
  "semver",
  "serde",
+ "serde_json",
+ "sha1",
  "sha2 0.10.9",
  "smoltcp",
  "tar",
@@ -1965,6 +1972,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ureq",
+ "zeroize",
  "zip",
 ]
 

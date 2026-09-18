@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Parser, Subcommand};
 use openvpn_connect::{Client, Config, Credentials, merge_config_path};
-use ovpnlane::{netstack::StackWorker, socks, update, vpn::UserspaceVpn};
+use ovpnlane::{connect, netstack::StackWorker, socks, update, vpn::UserspaceVpn};
 use std::{
     io::{self, IsTerminal, Write},
     net::{IpAddr, SocketAddr},
@@ -10,6 +10,7 @@ use std::{
 };
 use tokio::{net::TcpListener, sync::watch};
 use tracing_subscriber::EnvFilter;
+use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Parser)]
 #[command(
@@ -24,6 +25,12 @@ struct Args {
     /// OpenVPN profile; certificate/key paths are relative to it.
     #[arg(short, long, required = true)]
     config: Option<PathBuf>,
+    #[command(flatten)]
+    connection: ConnectionArgs,
+}
+
+#[derive(clap::Args)]
+struct ConnectionArgs {
     /// SOCKS5 endpoint. Only loopback addresses are accepted.
     #[arg(short, long, default_value = "127.0.0.1:1080")]
     listen: SocketAddr,
@@ -62,26 +69,41 @@ struct Args {
 enum Command {
     /// Check for or install an update from GitHub Releases.
     Update(update::UpdateArgs),
+    /// List locally stored OpenVPN Connect profiles (macOS; read-only).
+    Profiles,
+    /// Run an OpenVPN Connect profile as a userspace SOCKS5 proxy (macOS).
+    Connect {
+        /// Exact profile name or ID; choose interactively when omitted.
+        profile: Option<String>,
+        #[command(flatten)]
+        connection: ConnectionArgs,
+    },
+}
+
+enum ProfileSource {
+    File(PathBuf),
+    Connect(Option<String>),
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    if let Some(Command::Update(update_args)) = args.command {
-        return tokio::task::spawn_blocking(move || update::run(update_args)).await?;
-    }
-
-    // Register before asking for secrets. On Unix, rpassword temporarily disables
-    // ISIG and turns a typed Ctrl+C back into SIGINT itself. Without an installed
-    // handler that signal terminates the process before rpassword's guard can
-    // restore the terminal, leaving the caller's terminal in raw mode (so Ctrl+C,
-    // Ctrl+Z, and echo appear broken).
-    #[cfg(unix)]
-    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
-        .context("could not install interrupt handler")?;
-    #[cfg(windows)]
-    let mut interrupt =
-        tokio::signal::windows::ctrl_c().context("could not install interrupt handler")?;
+    let (source, mut args) = match args.command {
+        Some(Command::Update(update_args)) => {
+            return tokio::task::spawn_blocking(move || update::run(update_args)).await?;
+        }
+        Some(Command::Profiles) => {
+            return connect::list(&connect::discover()?, io::stdout().lock());
+        }
+        Some(Command::Connect {
+            profile,
+            connection,
+        }) => (ProfileSource::Connect(profile), connection),
+        None => (
+            ProfileSource::File(args.config.context("--config is required to connect")?),
+            args.connection,
+        ),
+    };
 
     tracing_subscriber::fmt()
         .with_writer(io::stderr)
@@ -98,11 +120,19 @@ async fn main() -> Result<()> {
         args.listen.ip().is_loopback(),
         "--listen must be a loopback address (127.0.0.1 or ::1)"
     );
-    let profile = args
-        .config
-        .context("--config is required to connect")?
-        .canonicalize()
-        .context("could not open profile")?;
+    let (profile, connect_profile) = match source {
+        ProfileSource::File(path) => (path, None),
+        ProfileSource::Connect(selector) => {
+            let profiles = connect::discover()?;
+            let selected = connect::choose(&profiles, selector.as_deref(), args.non_interactive)?;
+            // Explicit CLI/environment credentials take precedence over Connect metadata.
+            if args.username.is_none() {
+                args.username = selected.username.clone();
+            }
+            (selected.path.clone(), Some(selected.clone()))
+        }
+    };
+    let profile = profile.canonicalize().context("could not open profile")?;
     let merged = merge_config_path(
         profile
             .to_str()
@@ -114,6 +144,18 @@ async fn main() -> Result<()> {
         "could not load profile: {}",
         merged.error_text
     );
+    // Register after the profile menu, whose normal terminal mode allows the
+    // default Ctrl+C behavior, but before asking for secrets. On Unix, rpassword
+    // temporarily disables ISIG and turns a typed Ctrl+C back into SIGINT itself.
+    // Without an installed handler that signal terminates the process before
+    // rpassword's guard can restore the terminal, leaving it in raw mode.
+    #[cfg(unix)]
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+        .context("could not install interrupt handler")?;
+    #[cfg(windows)]
+    let mut interrupt =
+        tokio::signal::windows::ctrl_c().context("could not install interrupt handler")?;
+
     let worker = StackWorker::spawn(
         Duration::from_secs(args.connect_timeout.into()),
         Duration::from_secs(args.idle_timeout.into()),
@@ -155,6 +197,17 @@ async fn main() -> Result<()> {
         !evaluation.external_pki,
         "external PKI/smart-card profiles are not supported"
     );
+    // Keychain authorization dialogs are prompts too. This process-wide guard
+    // spans all credential reads/writes, including the post-auth save task.
+    #[cfg(target_os = "macos")]
+    let _keychain_ui = if args.non_interactive {
+        Some(
+            security_framework::os::macos::keychain::SecKeychain::disable_user_interaction()
+                .context("could not disable Keychain prompts for --non-interactive")?,
+        )
+    } else {
+        None
+    };
     tracing::info!(remote = %evaluation.remote_host, port = %evaluation.remote_port,
         protocol = %evaluation.remote_proto, username_password = !evaluation.autologin,
         "VPN profile loaded; authentication is verified by the server during connection");
@@ -198,31 +251,20 @@ async fn main() -> Result<()> {
                 user.trim().to_owned()
             };
             let account = keychain_account(&profile, &username);
-            let (password, should_save) = if let Ok(password) = std::env::var("OVPN_PASS") {
-                (password, args.save_password)
-            } else {
-                match keychain_password(&account) {
-                    Ok(Some(password)) => {
-                        tracing::info!("Using VPN password from the system keychain");
-                        (password, false)
-                    }
-                    Ok(None) => (
-                        secret("OVPN_PASS", "VPN password: ", args.non_interactive)?,
-                        args.save_password,
-                    ),
-                    Err(error) => {
-                        tracing::debug!(%error, "Could not read the system keychain");
-                        (
-                            secret("OVPN_PASS", "VPN password: ", args.non_interactive)?,
-                            args.save_password,
-                        )
-                    }
-                }
-            };
+            let (password, should_save) = resolve_vpn_password(
+                std::env::var("OVPN_PASS").ok(),
+                args.save_password,
+                || keychain_password(&account).map(|p| p.map(Zeroizing::new)),
+                || match &connect_profile {
+                    Some(profile) => profile.saved_password(&username),
+                    None => Ok(None),
+                },
+                || secret("OVPN_PASS", "VPN password: ", args.non_interactive).map(Zeroizing::new),
+            )?;
             if should_save {
                 password_to_save = Some((account, password.clone()));
             }
-            Credentials::new(username, password)
+            Credentials::new(username, password.as_str())
         };
         if !evaluation.static_challenge.is_empty() {
             credentials.response = secret(
@@ -231,9 +273,10 @@ async fn main() -> Result<()> {
                 args.non_interactive,
             )?;
         }
-        client
-            .provide_credentials(&credentials)
-            .context("could not set credentials")?;
+        let provided = client.provide_credentials(&credentials);
+        credentials.password.zeroize();
+        credentials.response.zeroize();
+        provided.context("could not set credentials")?;
     }
     let listener = TcpListener::bind(args.listen)
         .await
@@ -295,6 +338,39 @@ async fn main() -> Result<()> {
     result
 }
 
+// Sources are lazy: explicit credentials never trigger a Connect Keychain
+// access. No backend error payloads are logged; some can contain secret bytes.
+fn resolve_vpn_password(
+    environment: Option<String>,
+    save_password: bool,
+    own_keychain: impl FnOnce() -> Result<Option<Zeroizing<String>>>,
+    connect_keychain: impl FnOnce() -> Result<Option<Zeroizing<String>>>,
+    prompt: impl FnOnce() -> Result<Zeroizing<String>>,
+) -> Result<(Zeroizing<String>, bool)> {
+    if let Some(password) = environment {
+        return Ok((Zeroizing::new(password), save_password));
+    }
+    match own_keychain() {
+        Ok(Some(password)) => {
+            tracing::info!("Using VPN password from the OvpnLane system keychain entry");
+            return Ok((password, false));
+        }
+        Ok(None) => {}
+        Err(_) => tracing::debug!("Could not read the OvpnLane system keychain entry"),
+    }
+    match connect_keychain() {
+        Ok(Some(password)) => {
+            tracing::info!("Using saved VPN password from OpenVPN Connect");
+            return Ok((password, save_password));
+        }
+        Ok(None) => {}
+        Err(_) => tracing::warn!(
+            "Could not read the saved OpenVPN Connect password (Keychain access or credential format); falling back to VPN password input"
+        ),
+    }
+    Ok((prompt()?, save_password))
+}
+
 const KEYCHAIN_SERVICE: &str = "ovpnlane";
 
 fn keychain_account(profile: &Path, username: &str) -> String {
@@ -353,6 +429,55 @@ mod tests {
     }
 
     #[test]
+    fn connect_and_profiles_do_not_require_a_config_file() {
+        assert!(matches!(
+            Args::try_parse_from(["ovpnlane", "profiles"])
+                .unwrap()
+                .command,
+            Some(Command::Profiles)
+        ));
+        let args = Args::try_parse_from([
+            "ovpnlane",
+            "connect",
+            "Work VPN",
+            "--listen",
+            "127.0.0.1:1081",
+            "--username",
+            "alice",
+            "--save-password",
+            "--non-interactive",
+            "--check",
+        ])
+        .unwrap();
+        let Some(Command::Connect {
+            profile,
+            connection,
+        }) = args.command
+        else {
+            panic!("expected connect command");
+        };
+        assert_eq!(profile.as_deref(), Some("Work VPN"));
+        assert_eq!(connection.listen.port(), 1081);
+        assert_eq!(connection.username.as_deref(), Some("alice"));
+        assert!(connection.save_password && connection.non_interactive && connection.check);
+        assert!(Args::try_parse_from(["ovpnlane", "connect"]).is_ok());
+        assert!(Args::try_parse_from(["ovpnlane", "connect", "--config", "client.ovpn"]).is_err());
+        assert!(Args::try_parse_from(["ovpnlane", "--config", "client.ovpn", "connect"]).is_err());
+        assert!(Args::try_parse_from(["ovpnlane", "profiles", "--check"]).is_err());
+        assert!(
+            Args::try_parse_from([
+                "ovpnlane",
+                "connect",
+                "Work VPN",
+                "--save-password",
+                "--auth-file",
+                "auth.txt"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
     fn keychain_flag_conflicts_with_auth_file() {
         assert!(
             Args::try_parse_from([
@@ -365,6 +490,78 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn explicit_password_and_own_keychain_do_not_access_connect() {
+        let (password, save) = resolve_vpn_password(
+            Some("environment-password".into()),
+            true,
+            || panic!("must not read own keychain"),
+            || panic!("must not read Connect keychain"),
+            || panic!("must not prompt"),
+        )
+        .unwrap();
+        assert_eq!(password.as_str(), "environment-password");
+        assert!(save);
+        let (password, save) = resolve_vpn_password(
+            None,
+            true,
+            || Ok(Some(Zeroizing::new("own-password".into()))),
+            || panic!("must not read Connect keychain"),
+            || panic!("must not prompt"),
+        )
+        .unwrap();
+        assert_eq!(password.as_str(), "own-password");
+        assert!(!save);
+    }
+
+    #[test]
+    fn connect_password_is_only_copied_to_own_store_when_requested() {
+        for save_requested in [false, true] {
+            let (password, save) = resolve_vpn_password(
+                None,
+                save_requested,
+                || Ok(None),
+                || Ok(Some(Zeroizing::new("connect-password".into()))),
+                || panic!("must not prompt"),
+            )
+            .unwrap();
+            assert_eq!(password.as_str(), "connect-password");
+            assert_eq!(save, save_requested);
+        }
+    }
+
+    #[test]
+    fn missing_or_unreadable_keychain_entries_fall_back_without_exposing_errors() {
+        for denied in [false, true] {
+            let (password, save) = resolve_vpn_password(
+                None,
+                false,
+                || bail!("sensitive-own-backend-error"),
+                || {
+                    if denied {
+                        bail!("sensitive-connect-backend-error")
+                    } else {
+                        Ok(None)
+                    }
+                },
+                || Ok(Zeroizing::new("prompt-password".into())),
+            )
+            .unwrap();
+            assert_eq!(password.as_str(), "prompt-password");
+            assert!(!save);
+        }
+        let error = resolve_vpn_password(
+            None,
+            false,
+            || Ok(None),
+            || bail!("sensitive-backend-error"),
+            || bail!("set OVPN_PASS for non-interactive authentication"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("OVPN_PASS"));
+        assert!(!format!("{error:?}").contains("sensitive"));
     }
 
     #[test]

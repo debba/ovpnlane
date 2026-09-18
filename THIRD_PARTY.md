@@ -11,6 +11,12 @@ repository. Cargo.lock pins the complete dependency graph.
 - [smoltcp 0.12](https://github.com/smoltcp-rs/smoltcp): Rust TCP/IP stack,
   0BSD. No kernel network interface is used.
 - [Tokio](https://github.com/tokio-rs/tokio): asynchronous I/O, MIT.
+- RustCrypto [AES-GCM](https://github.com/RustCrypto/AEADs),
+  [PBKDF2](https://github.com/RustCrypto/password-hashes) and
+  [SHA-1](https://github.com/RustCrypto/hashes): MIT/Apache-2.0; used for compatibility
+  with OpenVPN Connect's existing saved-credential format, not a new storage scheme.
+- [security-framework](https://github.com/kornelski/rust-security-framework):
+  MIT/Apache-2.0; native macOS Keychain access, respecting its access controls.
 - LZ4 is statically built through `lz4-sys`; see the source package's BSD license.
 - The TAP-Windows public header is included under its MIT license option for
   Windows compilation only; see [vendor/windows/README.md](vendor/windows/README.md)
