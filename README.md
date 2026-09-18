@@ -23,6 +23,7 @@ not an official OpenVPN product.
 - [Install](#install)
 - [Update](#update)
 - [Quick start](#quick-start)
+- [OpenVPN Connect profiles on macOS](#openvpn-connect-profiles-on-macos)
 - [SSH, SFTP and Git](#ssh-sftp-and-git)
 - [curl and DNS](#curl-and-dns)
 - [Authentication](#authentication)
@@ -61,7 +62,7 @@ Select a version and installation directory:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/debba/ovpnlane/main/install.sh \
-  | OVPNLANE_VERSION=0.0.2 OVPNLANE_INSTALL_DIR="$HOME/bin" sh
+  | OVPNLANE_VERSION=0.0.4 OVPNLANE_INSTALL_DIR="$HOME/bin" sh
 ```
 
 To inspect the installer first:
@@ -81,12 +82,12 @@ musl/Alpine. Re-running it installs the selected release into the same directory
 Download the appropriate archive and its `.sha256` file from
 [GitHub Releases](https://github.com/debba/ovpnlane/releases/latest).
 
-| Release archive for 0.0.2 | Platform / build environment |
+| Release archive for 0.0.4 | Platform / build environment |
 | --- | --- |
-| `ovpnlane-0.0.2-macos-arm64.tar.gz` | Apple Silicon; built on macOS 15 |
-| `ovpnlane-0.0.2-macos-x86_64.tar.gz` | Intel; built on macOS 15 |
-| `ovpnlane-0.0.2-linux-x86_64.tar.gz` | Linux x86_64; Ubuntu 24.04 with glibc |
-| `ovpnlane-0.0.2-windows-x86_64.zip` | Windows x86_64; Windows Server 2022 / MSVC |
+| `ovpnlane-0.0.4-macos-arm64.tar.gz` | Apple Silicon; built on macOS 15 |
+| `ovpnlane-0.0.4-macos-x86_64.tar.gz` | Intel; built on macOS 15 |
+| `ovpnlane-0.0.4-linux-x86_64.tar.gz` | Linux x86_64; Ubuntu 24.04 with glibc |
+| `ovpnlane-0.0.4-windows-x86_64.zip` | Windows x86_64; Windows Server 2022 / MSVC |
 
 The build environments are the CI baseline, not a guarantee of compatibility
 with older OS/runtime versions. Linux ARM64 and musl packages are not published
@@ -105,8 +106,8 @@ ovpnlane.exe --config "$env:USERPROFILE\Documents\client.ovpn"
 Verify the ZIP before extracting:
 
 ```powershell
-Get-FileHash .\ovpnlane-0.0.2-windows-x86_64.zip -Algorithm SHA256
-Get-Content .\ovpnlane-0.0.2-windows-x86_64.zip.sha256
+Get-FileHash .\ovpnlane-0.0.4-windows-x86_64.zip -Algorithm SHA256
+Get-Content .\ovpnlane-0.0.4-windows-x86_64.zip.sha256
 ```
 
 Compare the hashes. On macOS use `shasum -a 256 -c ARCHIVE.sha256`; on Linux use
@@ -124,7 +125,7 @@ ovpnlane update --check
 ovpnlane update --dry-run
 ovpnlane update
 ovpnlane update --yes
-ovpnlane update --version 0.0.2 --yes
+ovpnlane update --version 0.0.4 --yes
 ```
 
 - `--check` queries GitHub and checks for the archive and checksum matching your
@@ -168,6 +169,81 @@ ovpnlane --config /path/to/client.ovpn --check
 ```
 
 This checks configuration, not server reachability or credential acceptance.
+
+## OpenVPN Connect profiles on macOS
+
+Use profiles already imported into **OpenVPN Connect 3** without exporting them:
+
+```sh
+ovpnlane profiles                        # list profile IDs and names
+ovpnlane connect                         # choose a profile and start SOCKS5
+ovpnlane connect "Work VPN"              # exact name, or an ID from the list
+ovpnlane connect "Work VPN" --listen 127.0.0.1:1081 --save-password
+ovpnlane connect "Work VPN" --check       # validate without connecting
+```
+
+With one profile, `connect` selects it automatically. With several, it prompts
+for a number; automation must pass an exact name or ID. Duplicate names require
+an ID. Names match the profile cards in Connect (`profileDisplayName`), rather
+than the original import filenames. Connection options are the same as for
+`--config`, including `--username`, `--auth-file`, `--dns` and `--non-interactive`.
+
+Discovery reads `.ovpn` files in
+`~/Library/Application Support/OpenVPN Connect/profiles` and names/usernames
+from the adjacent `config.json`. It does not launch or modify OpenVPN Connect,
+copy profiles or activate a system VPN. These are independent OvpnLane VPN
+sessions with the usual loopback SOCKS5 listener and Ctrl+C shutdown. To run
+several VPNs, start a command per profile with different `--listen` ports.
+Disconnect the profile in OpenVPN Connect first if you want only SOCKS traffic
+to use the VPN; OvpnLane does not stop existing system VPN sessions.
+
+The saved username is used unless overridden by `--username`/`OVPN_USER` or
+`--auth-file`. **Saved OpenVPN Connect passwords are reused automatically** for
+the selected profile and the same saved username. Password source priority is:
+
+1. `--auth-file`, when supplied (no other password sources are consulted).
+2. `OVPN_PASS`.
+3. OvpnLane's own saved password for this profile and username.
+4. OpenVPN Connect's saved password in the macOS Keychain, if enabled in Connect.
+5. A hidden password prompt, or an error with `--non-interactive`.
+
+macOS may ask permission to access Connect's Keychain entry. Access denial,
+missing entries and unsupported credential formats fall back to password input.
+`--non-interactive` disables macOS Keychain dialogs as well as terminal prompts;
+a previously unauthorized entry may therefore be unavailable in automation.
+`profiles` and `--check` never access passwords.
+
+The Connect credential is decrypted only in memory; it is never printed,
+exported or written back to Connect. Use `--save-password` to copy it into
+OvpnLane's own Keychain entry **only after successful VPN authentication**.
+Changing the username prevents reuse of Connect's saved password. Tokens, OTPs,
+private-key passwords, application settings, server overrides, proxies and
+external certificates are not imported; SSO/external-PKI limitations still apply.
+
+The storage format is private to OpenVPN Connect (verified with macOS version
+3.8.2). If metadata is absent, profiles are listed by file ID; if the format has
+changed or a profile is unavailable, use an exported file with `--config PATH`.
+Only these new OpenVPN Connect commands are macOS-only: on Linux and Windows,
+`profiles` and `connect` return an explicit unsupported-platform error without
+reading Connect's storage or credentials. **OvpnLane still builds and runs on all
+three platforms**; file-based `--config` connections and `update` remain available.
+Linux and Windows Connect integration is deferred to future work.
+
+### Why not OpenVPN's `--socks-proxy`?
+
+These operations work in opposite directions:
+
+```text
+openvpn --socks-proxy:  OpenVPN client -> existing SOCKS proxy -> VPN server
+OvpnLane:              application -> local SOCKS proxy -> userspace VPN -> destination
+```
+
+OpenVPN's `--socks-proxy HOST PORT` consumes an existing SOCKS proxy to reach the
+VPN server. It does not expose the VPN as a SOCKS server and does not replace
+OpenVPN's normal system tunnel/routing configuration. OpenVPN can be combined
+with a separate SOCKS server and suitable routing/isolation, but that is not a
+single built-in option. OvpnLane provides the latter direction without a kernel
+TUN device, administrator privileges or changes to system routes and DNS.
 
 ## SSH, SFTP and Git
 
@@ -271,6 +347,7 @@ Alternatively inject credentials through your process manager's environment:
 | `OVPN_RESPONSE` | Static challenge response |
 
 `--non-interactive` fails instead of prompting when required values are absent.
+On macOS it also suppresses Keychain authorization dialogs.
 OvpnLane does not generate credential files or intentionally log passwords,
 tokens, certificate bodies or private keys. Keep profiles and credentials out
 of public repositories. Static challenges do not imply support for browser
@@ -285,12 +362,14 @@ OpenVPN **3 Core** and the binding, not every option in the OpenVPN 2 executable
 
 ```text
 ovpnlane --config <PROFILE> [OPTIONS]
+ovpnlane profiles                         # macOS
+ovpnlane connect [NAME_OR_ID] [OPTIONS]    # macOS
 ovpnlane update [--check | --dry-run] [--version <VERSION>] [--yes]
 ```
 
 | Connection option | Default / behavior |
 | --- | --- |
-| `-c, --config PATH` | Required profile |
+| `-c, --config PATH` | Required for file-based connections; use `connect` for OpenVPN Connect profiles |
 | `-l, --listen ADDRESS` | `127.0.0.1:1080`; loopback only |
 | `--dns IP` | Repeatable VPN DNS override |
 | `--username USER` | VPN username |
@@ -303,7 +382,7 @@ ovpnlane update [--check | --dry-run] [--version <VERSION>] [--yes]
 | `--max-connections COUNT` | `128`; range 1–4096 |
 | `-v, --verbose` | Extra connection diagnostics |
 | `-V, --version` | Print application version |
-| `-h, --help` | Help, also available for `update` |
+| `-h, --help` | Help, also available for `connect`, `profiles` and `update` |
 
 The connection timeout applies to VPN startup and each proxied DNS/TCP request.
 DNS lookup and TCP setup share a per-request deadline. SOCKS negotiation has a
@@ -332,6 +411,8 @@ stack, not to host networking.
 | Module | Responsibility |
 | --- | --- |
 | [main.rs](src/main.rs) | CLI, profile, credentials and lifecycle |
+| [connect.rs](src/connect.rs) | Read-only OpenVPN Connect profile discovery and selection on macOS |
+| [connect/password.rs](src/connect/password.rs) | Read-only Connect Keychain access and in-memory credential decoding |
 | [vpn.rs](src/vpn.rs) | OpenVPN callbacks, packet tunnel and diagnostics |
 | [netstack.rs](src/netstack.rs) | TCP streams, packet queues and DNS |
 | [socks.rs](src/socks.rs) | SOCKS5 negotiation and forwarding |
@@ -445,7 +526,14 @@ sh -n install.sh
 Packet integration tests join two actual smoltcp stacks in memory. They cover
 SOCKS framing, a 512 KiB transfer, half-close, IPv6, tunneled DNS, refusal and
 VPN loss. Update tests cover release selection, checksums and constrained archive
-extraction. Installer tests use local fixtures without modifying a real installation.
+extraction. OpenVPN Connect discovery tests use synthetic metadata and profiles,
+including display names, duplicate names, missing/corrupt metadata and
+non-interactive selection. Saved-password tests use independent synthetic Node.js
+crypto vectors and mock sources to verify decoding, tamper rejection, username
+scoping, credential precedence and fallback. Linux/Windows CLI tests assert that
+Connect commands fail with the macOS-only error, while file-based validation is
+tested on every platform. Tests never read real Keychain entries.
+Installer tests use local fixtures without modifying a real installation.
 
 The interoperability test starts a local OpenVPN server with `dev null` and
 temporary certificates. It requires Python 3, OpenVPN 2.6+ and OpenSSL:

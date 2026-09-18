@@ -1,3 +1,4 @@
+pub mod connect;
 pub mod netstack;
 pub mod settings;
 pub mod socks;

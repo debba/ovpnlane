@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.0.4
+
+- Added `ovpnlane profiles` to list locally stored OpenVPN Connect profiles on macOS.
+- Added `ovpnlane connect [NAME_OR_ID]` to start a profile as a userspace SOCKS5
+  proxy, with interactive selection when several profiles are available and no
+  name is supplied. All existing connection options remain available.
+- Use the profile card's display name instead of the original import filename.
+- Reuse OpenVPN Connect's saved VPN password from the macOS Keychain for the
+  selected profile and saved username, decoding it only in memory. Explicit
+  credentials and OvpnLane's own saved password take precedence. Missing,
+  denied or unrecognized credentials fall back to the existing password input.
+- Leave Connect's files and Keychain entries unchanged. `--save-password` may
+  copy the password into OvpnLane's own store after successful authentication.
+- Disable macOS Keychain dialogs with `--non-interactive`. Listing profiles and
+  validating with `--check` never read credentials.
+- Keep builds and existing file-based connections/updating cross-platform;
+  only `profiles` and `connect` are restricted to macOS. Linux/Windows Connect
+  integration is deferred, with explicit unsupported-platform errors for now.
+- Document why OpenVPN's `--socks-proxy` is the reverse operation, not a built-in
+  way to expose the VPN as a SOCKS server.
+- Added profile discovery/selection tests, synthetic credential decoding and
+  source-precedence tests, and macOS usage documentation.
+
 ## 0.0.3
 
 ### Terminal handling
